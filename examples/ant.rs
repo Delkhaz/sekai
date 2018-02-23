@@ -43,6 +43,7 @@ impl AntWorld {
             food_locations: Vec::new(),
             pheromone_trail: Vec::new(),
             ant_swarm: Vec::new(),
+            ant_hive: (0.0,0.0),
         }
     }
 }
