@@ -17,11 +17,7 @@
  */
 extern crate sekai;
 use sekai::world::World;
-<<<<<<< HEAD
-use sekai::entity::Entity; 
-=======
 use sekai::entity::Entity;
->>>>>>> f21d675535ab87e2b522689c0157b8ad83b8600a
 
 #[derive(Debug)]
 struct FireflyWorld {
@@ -69,31 +65,11 @@ impl World<Color> for FireflyWorld {
         // average color
         // determine which firefles are near the current iteration
         // of the firefly and then average the message, then pass the message
-<<<<<<< HEAD
-        /*
-        for (id, firefly) in &mut self.firefly_swarm {
-            println!("Updating firefly {}", id);
-        }*/
-        /* to be implemented 
-        for each  firefly 
-        loop through the rest of the fire flys 
-        check all x,y cordinates and calculate the coordinate
-        */
-=======
->>>>>>> f21d675535ab87e2b522689c0157b8ad83b8600a
 
         // if a firefly is in sync for a long enough time, add a new firefly
         // TODO: how to implement:
         // if fireflies flash at the same time, then they move closer
-<<<<<<< HEAD
-        // if they are within a close enough radius, birth new firefly 
-        
-        // if a firefly's life is <= 0, remove it
-        // TODO: Execute this in the checking loop
-        
-=======
         // if they are within a close enough radius, birth new firefly
->>>>>>> f21d675535ab87e2b522689c0157b8ad83b8600a
     }
     // returns the number of fireflies in the swarm
     fn num_entities(&self) -> usize {
@@ -107,18 +83,11 @@ impl World<Color> for FireflyWorld {
         }
     }
 }
+
 impl FireflyWorld {
     // birth of new entity
     fn add_entity(&mut self, firefly: Firefly) {
         self.firefly_swarm.push(firefly);
-    }
-    // calculates Euclidean distance between two fireflys in n dimensional space
-    fn get_dist(&mut self, firefly_a: &Firefly, firefly_b: &Firefly) -> f32 {
-        let mut sum = 0.0f32;
-        for i in 0..firefly_a.pos.len() {
-            sum += (firefly_a.pos[i] - firefly_b.pos[i]).powi(2)
-        };
-        return sum.sqrt();
     }
 
     // death of some entity
@@ -288,14 +257,6 @@ impl Entity<Color> for Firefly {
 fn main() {
     println!("This is the main function");
 }
-<<<<<<< HEAD
-#[cfg(test)]
-#[test]
-fn test_world_update() {
-    let mut world = FireflyWorld {
-        firefly_swarm: Vec::new(),
-    };
-=======
 
 #[cfg(test)]
 mod test {
@@ -305,7 +266,6 @@ mod test {
         let mut world = FireflyWorld {
             firefly_swarm: Vec::new(),
         };
->>>>>>> f21d675535ab87e2b522689c0157b8ad83b8600a
 
         // add some test fireflies
         world.add_entity(Firefly::new_at(vec![5_f32,12_f32]));
@@ -386,20 +346,4 @@ mod test {
         let mid = world.calc_midpoint(&a, &b);
         assert_eq!(mid, vec![1.5_f32, 2_f32, 2.5_f32]);
     }
-}
-
-#[cfg(test)]
-#[test]
-fn test_get_dist(){
-    let mut world = FireflyWorld {
-        firefly_swarm: Vec::new(),
-    };
-
-    let mut a = Firefly::new(2);
-    let mut b = Firefly::new(2);
-    a.pos.push(3.0);
-    a.pos.push(4.0);
-    b.pos.push(0.0);
-    b.pos.push(0.0);
-    assert_eq!(world.get_dist(&a,&b), 5.0);
 }
