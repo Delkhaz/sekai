@@ -1,6 +1,6 @@
 /*
  *
- *Synchronize flashing of a firefly swarm
+ * Synchronize flashing of a firefly swarm
  *
  * Fireflies are stored as a swarm in FireflyWorld.
  * The whole swarm is a vector, mapping an index to the firefly object.
@@ -15,11 +15,23 @@
  * a straight optimization.
  *
  */
+
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
+
+extern crate rand;
+extern crate rayon;
 extern crate sekai;
+
+use rayon::prelude::*;
 use sekai::world::World;
 use sekai::entity::Entity;
+use rand::distributions::Normal;
+use rand::distributions::IndependentSample;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FireflyWorld {
     firefly_swarm: Vec<Firefly>,
 }
@@ -29,6 +41,13 @@ impl World<Color> for FireflyWorld {
         println!("*** UPDATING WORLD ***");
 
         // Update all fireflies
+        // TODO: use iterator for update. currently dosn't work
+        /*
+        self.firefly_swarm
+            .par_iter_mut()
+            .map(|ref mut firefly| firefly.update((self.clone()) as &mut World<Color>));
+        */
+
         let num_fireflies = self.num_entities();
         for i in 0..num_fireflies {
             // call each firefly's update function
@@ -38,28 +57,34 @@ impl World<Color> for FireflyWorld {
         }
 
         // Remove dead fireflies
-        self.firefly_swarm.retain(|ref firefly| firefly.lifetime != 0);
+        self.firefly_swarm
+            .retain(|ref firefly| firefly.lifetime != 0);
 
-        let num_fireflies = self.num_entities();
         // Compare remaining fireflies
-        for i in 0..num_fireflies {
-            for j in (i+1)..num_fireflies{
-                // skip comparison to self
-                if i == j {
+
+        // clone all fireflies
+        let firefly_swarm_b = self.firefly_swarm.clone();
+        //let mut iter = self.firefly_swarm.iter_mut();
+
+        for (index_a, firefly_a) in self.firefly_swarm.iter_mut().enumerate() {
+            for (index_b, firefly_b) in firefly_swarm_b.iter().enumerate() {
+                if index_a == index_b {
                     continue;
                 }
-                // check for distances
-                if self.get_dist(&self.firefly_swarm[i],
-                                 &self.firefly_swarm[j]) < Firefly::SIGHT_RANGE {
-                    println!("Close with {:?} and {:?}", 
-                             self.firefly_swarm[i].pos, 
-                             self.firefly_swarm[j].pos);
+                let dist = FireflyWorld::get_dist(&firefly_a.pos, &firefly_b.pos);
+                let close: bool = dist < Firefly::SIGHT_RANGE && firefly_b.cur_flash_cooldown == 0;
+
+                if close {
+                    println!("Close with {:?} and {:?}", firefly_a.pos, firefly_b.pos);
+
+                    // Fireflies step towards each other
+                    let new_pos_a = (&firefly_a).unit_step(&firefly_b.pos, dist);
+
+                    firefly_a.update_position(&new_pos_a);
+                    println!("New position: {:?}", firefly_a.pos);
                 }
             }
         }
-        
-
-
 
         // Iterate through all fireflies in a specifc range,
         // average color
@@ -95,23 +120,22 @@ impl FireflyWorld {
         self.firefly_swarm.swap_remove(idx);
     }
 
-    // calculates Euclidean distance between two fireflys in n dimensional space
-    fn get_dist(&self, firefly_a: &Firefly, firefly_b: &Firefly) -> f32 {
-        // Iterate over coordinates in firefly a
-        firefly_a.pos
-            .iter()
-            // Compare to coordinates in firefly b
-            .zip(firefly_b.pos.iter())
-            // Square all the differences
-            .map(|(a_coord, b_coord)| (a_coord - b_coord).powi(2))
-            // Sum the squares
-            .sum::<f32>()
-            // Take the square root
-            .sqrt()
-    }
+    fn create_swarm(&mut self, n: usize, distribution: usize) {
+        if distribution == 1 {
+            let mut rng = rand::thread_rng();
 
+            // mean 0, standard deviation 100:
+            let normal = Normal::new(0.0, 100.0);
+            for _ in 0..n {
+                let position: Vec<f32> =
+                    (0..3).map(|_| normal.ind_sample(&mut rng) as f32).collect();
+                let firefly = Firefly::new_at(position);
+                self.add_entity(firefly);
+            }
+        }
+    }
     //This outputs the midpoint between two fireflies.
-    fn calc_midpoint(&mut self, ff1:&Firefly, ff2:&Firefly) -> Vec<f32> {
+    fn calc_midpoint(&mut self, ff1: &Firefly, ff2: &Firefly) -> Vec<f32> {
         //Iterate over the coordinates in firefly 1.
         ff1
             .pos
@@ -124,9 +148,28 @@ impl FireflyWorld {
             .collect()
     }
 
+    // serializes fireflyswarm
+    fn serialize(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(&self.firefly_swarm)
+    }
+
+    // calculates Euclidean distance between two fireflys in n dimensional space
+    fn get_dist(vec_a: &[f32], vec_b: &[f32]) -> f32 {
+        // Iterate over coordinates in firefly a
+        vec_a
+            .iter()
+            // Compare to coordinates in firefly b
+            .zip(vec_b.iter())
+            // Square all the differences
+            .map(|(a_coord, b_coord)| (a_coord - b_coord).powi(2))
+            // Sum the squares
+            .sum::<f32>()
+            // Take the square root
+            .sqrt()
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 struct Color {
     red: f32,
     green: f32,
@@ -145,19 +188,19 @@ impl Color {
     }
 }
 
-impl std::ops::Mul<f32> for Color {
+impl<'a> std::ops::Mul<f32> for &'a Color {
     type Output = Color;
-    fn mul(self, rhs: f32) -> Self {
+    fn mul(self, rhs: f32) -> Self::Output {
         Color {
             red: self.red * rhs,
             green: self.green * rhs,
             blue: self.blue * rhs,
-            pos: self.pos,
+            pos: (self.pos).clone(),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct Firefly {
     pos: Vec<f32>,
     color: Color,            // RGB
@@ -172,16 +215,15 @@ impl Firefly {
     // associated const for sight range
     const SIGHT_RANGE: f32 = 5_f32;
 
-
     // constructor
     fn new(num_dimensions: usize) -> Self {
         Firefly {
             pos: Vec::with_capacity(num_dimensions),
             color: Color::new(num_dimensions),
-            flash_cooldown: 100,     // TODO: placeholder
-            cur_flash_cooldown: 100, // TODO: placeholder
+            flash_cooldown: 10,      // TODO: placeholder
+            cur_flash_cooldown: 10,  // TODO: placeholder
             flash_rate: 1,           // TODO: placeholder
-            lifetime: 500,           // TODO: placeholder
+            lifetime: 50,            // TODO: placeholder
             reproduction_range: 5.0, // TODO: placeholder
         }
     }
@@ -191,27 +233,32 @@ impl Firefly {
         Firefly {
             pos: pos.clone(),
             color: Color::new(pos.len()),
-            flash_cooldown: 100,     // TODO: placeholder
-            cur_flash_cooldown: 100, // TODO: placeholder
+            flash_cooldown: 10,      // TODO: placeholder
+            cur_flash_cooldown: 10,  // TODO: placeholder
             flash_rate: 1,           // TODO: placeholder
-            lifetime: 500,           // TODO: placeholder
+            lifetime: 50,            // TODO: placeholder
             reproduction_range: 5.0, // TODO: placeholder
         }
     }
 
     //This outputs a unit vector which points from self to other.
-    fn unit_step(&mut self, other:&Firefly, dist:f32) {
-        self.pos = self
-                       .pos
-                       .iter()
-                       //Collect respective position components.
-                       .zip(other.pos.iter())
-                       //Yield new component, scaled appropriately.
-                       .map(|(p1_i, p2_i)| {(p2_i - p1_i)/dist})
-                       //Yield new vector.
-                       .collect();
+
+    fn unit_step(&self, other: &[f32], dist: f32) -> Vec<f32> {
+        self.pos
+            .iter()
+            .zip(other.iter())
+            .map(|(p1_i, p2_i)| (p2_i - p1_i) / dist)
+            .collect()
     }
 
+    // updates this firefly's position by some calculated delta
+    fn update_position(&mut self, delta: &[f32]) {
+        self.pos = self.pos
+            .iter()
+            .zip(delta.iter())
+            .map(|(a, b)| a + b)
+            .collect();
+    }
 }
 
 /// Fireflies communicate with lights, represented in the
@@ -219,10 +266,16 @@ impl Firefly {
 impl Entity<Color> for Firefly {
     // todo: receive message, send message,
     fn update(&mut self, _world: &World<Color>) {
+        // At end of cooldown
+        if self.cur_flash_cooldown == 0 {
+            // Reset cooldown
+            self.cur_flash_cooldown = self.flash_cooldown;
+            // TODO: flash
+        }
         // Sanity check to make sure we dont update dead fireflies
         if self.lifetime == 0 {
             // grave of the fireflies
-            // lol steven 
+            // lol steven
             return;
         }
         // Lose some life
@@ -230,12 +283,6 @@ impl Entity<Color> for Firefly {
 
         // Tick down flash cooldown
         self.cur_flash_cooldown -= self.flash_rate;
-        // At end of cooldown
-        if self.cur_flash_cooldown == 0 {
-            // Reset cooldown
-            self.cur_flash_cooldown = self.flash_cooldown;
-            // TODO: flash
-        }
     }
     fn receive_message(&mut self, message: Color) {
         // If a firefly sees some color, it must by some logic
@@ -245,17 +292,39 @@ impl Entity<Color> for Firefly {
         let alpha: f32 = 1e-2;
         // If all message lights that were received were averaged by the world:
         // Scale the averaged message by some alpha step size
-        self.color = message * alpha;
+        self.color = &message * alpha;
         // If received, reset cur_flash_cooldown
         self.cur_flash_cooldown = self.flash_cooldown;
         // how to update flash rate?  should this even be parameterized?
 
         // TODO: update position based on the message
+
+        // Fireflies step towards each other
+        let dist = FireflyWorld::get_dist(&self.pos, &message.pos);
+        let new_pos = (&self).unit_step(&message.pos, dist);
+        self.update_position(&new_pos);
+        println!("New position: {:?}", self.pos,);
     }
 }
 
 fn main() {
-    println!("This is the main function");
+    let mut world = FireflyWorld {
+        firefly_swarm: Vec::new(),
+    };
+
+    // create a swarm
+    //world.create_swarm(1e6 as usize, 1);
+
+    world.add_entity(Firefly::new_at(vec![5_f32, 12_f32]));
+    world.add_entity(Firefly::new_at(vec![0_f32, 0_f32]));
+    world.add_entity(Firefly::new_at(vec![0_f32, 1_f32]));
+    world.add_entity(Firefly::new_at(vec![7_f32, 10_f32]));
+
+    for _ in 0..1 {
+        world.update();
+    }
+
+    println!("{}", world.num_entities());
 }
 
 #[cfg(test)]
@@ -267,34 +336,19 @@ mod test {
             firefly_swarm: Vec::new(),
         };
 
-        // add some test fireflies
-        world.add_entity(Firefly::new_at(vec![5_f32,12_f32]));
-        world.add_entity(Firefly::new_at(vec![0_f32,0_f32]));
-        world.add_entity(Firefly::new_at(vec![0_f32,1_f32]));
-        world.add_entity(Firefly::new_at(vec![7_f32,10_f32]));
+        // create a swarm
+        world.create_swarm(1e6 as usize, 1);
 
-        // set different lifetimes for each firefly
-        world.firefly_swarm[0].lifetime = 2;
-        world.firefly_swarm[1].lifetime = 3;
-        world.firefly_swarm[2].lifetime = 4;
-        world.firefly_swarm[3].lifetime = 11;
+        //world.add_entity(Firefly::new_at(vec![5_f32, 12_f32]));
+        //world.add_entity(Firefly::new_at(vec![0_f32, 0_f32]));
+        //world.add_entity(Firefly::new_at(vec![0_f32, 1_f32]));
+        //world.add_entity(Firefly::new_at(vec![7_f32, 10_f32]));
 
-        // check updates for death
-        assert_eq!(world.num_entities(), 4);
-        world.update();
-        assert_eq!(world.num_entities(), 4);
-        world.update();
-        assert_eq!(world.num_entities(), 3);
-        world.update();
-        assert_eq!(world.num_entities(), 2);
-        world.update();
-        assert_eq!(world.num_entities(), 1);
-        for _ in 0..6 {
+        for _ in 0..10 {
             world.update();
         }
-        assert_eq!(world.num_entities(), 1);
-        world.update();
-        assert_eq!(world.num_entities(), 0);
+
+        println!("{}", world.num_entities());
     }
 
     #[test]
@@ -308,12 +362,11 @@ mod test {
         a.pos = vec![3.0, 4.0];
         b.pos = vec![0.0, 0.0];
 
-        assert_eq!(world.get_dist(&a, &b), 5.0);
+        assert_eq!(FireflyWorld::get_dist(&a.pos, &b.pos), 5.0);
     }
 
-
     #[test]
-    fn test_unit_step(){
+    fn test_unit_step() {
         let world = FireflyWorld {
             firefly_swarm: Vec::new(),
         };
@@ -324,13 +377,15 @@ mod test {
         a.pos.push(0.0);
         b.pos.push(1.0);
         b.pos.push(2.0);
-        let d = world.get_dist(&a, &b);
-        a.unit_step(&b, d);
-        assert_eq!(a.pos, vec![1_f32/5_f32.sqrt(), 2_f32/5_f32.sqrt()]);
+
+        let d = FireflyWorld::get_dist(&a.pos, &b.pos);
+        let new_pos = a.unit_step(&b.pos, d);
+        a.pos = new_pos;
+        assert_eq!(a.pos, vec![1_f32 / 5_f32.sqrt(), 2_f32 / 5_f32.sqrt()]);
     }
 
     #[test]
-    fn test_midpoint(){
+    fn test_midpoint() {
         let mut world = FireflyWorld {
             firefly_swarm: Vec::new(),
         };
@@ -345,5 +400,30 @@ mod test {
         b.pos.push(0.0);
         let mid = world.calc_midpoint(&a, &b);
         assert_eq!(mid, vec![1.5_f32, 2_f32, 2.5_f32]);
+    }
+
+    #[test]
+    fn test_create_swarm() {
+        let mut world = FireflyWorld {
+            firefly_swarm: Vec::new(),
+        };
+
+        world.create_swarm(15, 1);
+        assert_eq!(world.num_entities(), 15);
+    }
+
+    #[test]
+    fn test_serialize() {
+        let mut world = FireflyWorld {
+            firefly_swarm: Vec::new(),
+        };
+        world.add_entity(Firefly::new_at(vec![5_f32, 12_f32]));
+        world.add_entity(Firefly::new_at(vec![0_f32, 0_f32]));
+        world.add_entity(Firefly::new_at(vec![0_f32, 1_f32]));
+        world.add_entity(Firefly::new_at(vec![7_f32, 10_f32]));
+        //let serialized_world =
+        //serde_json::to_string(&world.firefly_swarm).expect("Failed to serialize firefly world");
+        let serialized_world = world.serialize().expect("Failed to serialize");
+        println!("{}", serialized_world);
     }
 }
